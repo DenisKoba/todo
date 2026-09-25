@@ -5,7 +5,7 @@ services:
     plan: free
     region: frankfurt
     branch: main
-    buildCommand: corepack enable && corepack prepare pnpm@9.15.9 --activate && pnpm install --frozen-lockfile && pnpm --filter @todo/api prisma:generate && pnpm --filter @todo/api build
+    buildCommand: npm install -g corepack@0.31.0 && corepack enable && corepack prepare pnpm@9.15.9 --activate && pnpm --version && pnpm install --frozen-lockfile && pnpm --filter @todo/api prisma:generate && pnpm --filter @todo/api build
     startCommand: pnpm --filter @todo/api prisma:deploy && pnpm --filter @todo/api start
     healthCheckPath: /v1/health
     envVars:
