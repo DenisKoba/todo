@@ -25,11 +25,11 @@ For a native iOS build, run `pnpm ios` from the repository root on a Mac with Xc
 - Add `todo://auth/callback` to Authentication → URL Configuration → Redirect URLs.
 - In Google Cloud, configure the OAuth consent screen and add the Supabase callback URL shown by Supabase as an authorized redirect URI.
 - Apply the schema using `pnpm db:deploy`, or paste the equivalent SQL migration into Supabase SQL Editor.
-- The API verifies Supabase access tokens and scopes every query to the authenticated user. Keep database credentials server-side; only the Supabase URL and publishable key belong in the app. For a physical phone on local Wi-Fi, set `EXPO_PUBLIC_API_URL` to your Mac's LAN address (not `localhost`); for simulator testing, localhost is fine.
+- The API verifies Supabase access tokens with Supabase Auth and scopes every query to the authenticated user. Keep database credentials server-side; the Supabase URL and publishable key are safe to use in the app and API. Set `SUPABASE_PUBLISHABLE_KEY` to the same key as `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`. For a physical phone on local Wi-Fi, set `EXPO_PUBLIC_API_URL` to your Mac's LAN address (not `localhost`); for simulator testing, localhost is fine.
 
 ## Render
 
-`render.yaml` is a Blueprint template for the API. Connect this separate repository in Render, review the plan, and provide `SUPABASE_URL`, `DATABASE_URL`, and `DIRECT_URL` in Render's environment settings. The blueprint does not create or configure Supabase, Google OAuth, or a GitHub remote by itself.
+`render.yaml` is a Blueprint template for the API. Connect this separate repository in Render, review the plan, and provide `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `DATABASE_URL`, and `DIRECT_URL` in Render's environment settings. The blueprint does not create or configure Supabase or Google OAuth by itself.
 
 ## API
 
