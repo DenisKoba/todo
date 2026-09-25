@@ -1,0 +1,50 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Profile {
+  id          String     @id @db.Uuid
+  displayName String?    @map("display_name") @db.VarChar(80)
+  avatarUrl   String?    @map("avatar_url")
+  locale      String     @default("en") @db.VarChar(20)
+  createdAt   DateTime   @default(now()) @map("created_at")
+  updatedAt   DateTime   @updatedAt @map("updated_at")
+  lists       TodoList[]
+
+  @@map("profiles")
+}
+
+model TodoList {
+  id        String     @id @default(uuid()) @db.Uuid
+  ownerId   String     @map("owner_id") @db.Uuid
+  title     String     @db.VarChar(120)
+  comment   String?
+  position  Int        @default(0)
+  createdAt DateTime   @default(now()) @map("created_at")
+  updatedAt DateTime   @updatedAt @map("updated_at")
+  owner     Profile    @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  items     TodoItem[]
+
+  @@index([ownerId, position])
+  @@map("todo_lists")
+}
+
+model TodoItem {
+  id        String   @id @default(uuid()) @db.Uuid
+  listId    String   @map("list_id") @db.Uuid
+  title     String   @db.VarChar(240)
+  comment   String?
+  completed Boolean  @default(false)
+  position  Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  list      TodoList @relation(fields: [listId], references: [id], onDelete: Cascade)
+
+  @@index([listId, position])
+  @@map("todo_items")
+}

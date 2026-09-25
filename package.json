@@ -1,0 +1,27 @@
+{
+  "name": "todo-app",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@9.15.9",
+  "scripts": {
+    "dev:mobile": "dotenv -c -- pnpm --filter @todo/mobile start",
+    "dev:api": "dotenv -c -- pnpm --filter @todo/api dev",
+    "ios": "dotenv -c -- pnpm --filter @todo/mobile ios",
+    "android": "dotenv -c -- pnpm --filter @todo/mobile android",
+    "build:api": "pnpm --filter @todo/api build",
+    "typecheck": "pnpm -r typecheck",
+    "db:generate": "dotenv -c -- pnpm --filter @todo/api prisma:generate",
+    "db:deploy": "dotenv -c -- pnpm --filter @todo/api prisma:deploy"
+  },
+  "devDependencies": {
+    "dotenv-cli": "^8.0.0",
+    "prettier": "^3.6.2",
+    "typescript": "~6.0.3"
+  },
+  "pnpm": {
+    "overrides": {
+      "react": "19.2.3",
+      "react-dom": "19.2.3"
+    }
+  }
+}

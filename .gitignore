@@ -1,0 +1,14 @@
+node_modules/
+.pnpm-store/
+.turbo/
+dist/
+coverage/
+.expo/
+.env
+.env.*
+!.env.example
+apps/mobile/ios/
+apps/mobile/android/
+apps/api/src/generated/
+*.log
+.DS_Store
