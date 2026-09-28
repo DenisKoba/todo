@@ -1,4 +1,4 @@
-import { Icon } from "@expo/ui";
+import { Host, Icon } from "@expo/ui";
 
 export type NativeIconName =
   "add" | "check" | "delete" | "person" | "share" | "circle";
@@ -33,9 +33,20 @@ const icons = {
 export function NativeIcon({
   name,
   size = 22,
+  color,
 }: {
   name: NativeIconName;
   size?: number;
+  color?: string;
 }) {
-  return <Icon name={icons[name]} size={size} accessibilityLabel={name} />;
+  return (
+    <Host style={{ width: size, height: size }} pointerEvents="none">
+      <Icon
+        name={icons[name]}
+        size={size}
+        color={color}
+        accessibilityLabel={name}
+      />
+    </Host>
+  );
 }

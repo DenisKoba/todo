@@ -16,11 +16,22 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { api, type Profile } from "@/api/client";
 import { useAuth } from "@/auth/auth-context";
 import { NativeIcon } from "@/components/native-icon";
-import { colors, radius, spacing } from "@/theme/tokens";
+import { pauseGuestImportsForAccountDeletion } from "@/data/todo-repository";
+import { deleteImportedGuestLists } from "@/local/guest-store";
+import { supabase } from "@/lib/supabase";
+import { colors } from "@/theme/tokens";
 import { t } from "@/i18n";
 
+const palette = {
+  background: "#F7F7F7",
+  white: "#FFFFFF",
+  black: "#111111",
+  muted: "#929292",
+  border: "#E5E5E5",
+} as const;
+
 export default function ProfileScreen() {
-  const { user, session, signOut } = useAuth();
+  const { user, session, signOut, clearDeletedSession } = useAuth();
   const queryClient = useQueryClient();
   const profileQuery = useQuery({
     queryKey: ["profile", user?.id],
@@ -29,6 +40,8 @@ export default function ProfileScreen() {
   });
   const [name, setName] = useState("");
   const [avatarUrl, setAvatarUrl] = useState("");
+  const [signingOut, setSigningOut] = useState(false);
+  const [deletingAccount, setDeletingAccount] = useState(false);
   useEffect(() => {
     if (profileQuery.data) {
       setName(profileQuery.data.displayName ?? "");
@@ -49,8 +62,127 @@ export default function ProfileScreen() {
       queryClient.invalidateQueries({ queryKey: ["profile", user?.id] }),
   });
 
+  const handleSignOut = async () => {
+    setSigningOut(true);
+    try {
+      await signOut();
+      router.replace("/(app)");
+    } catch (cause) {
+      Alert.alert(
+        t("error"),
+        cause instanceof Error ? cause.message : t("error"),
+      );
+    } finally {
+      setSigningOut(false);
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    if (!session || deletingAccount) return;
+    const accountId = session.user.id;
+    const usedApple =
+      session.user.app_metadata.provider === "apple" ||
+      session.user.app_metadata.providers?.includes("apple");
+    let resumeGuestImports: (() => void) | undefined;
+    let deletionError: unknown;
+    let serverDeleted = false;
+    setDeletingAccount(true);
+    try {
+      // Imports are server writes. Drain them before deleting the server user.
+      resumeGuestImports = await pauseGuestImportsForAccountDeletion(accountId);
+      await api<void>("/me", session, { method: "DELETE" });
+      serverDeleted = true;
+    } catch (cause) {
+      deletionError = cause;
+      // The API may have deleted the user even if its response was lost.
+      // Only an explicit user_not_found response is proof of that outcome.
+      try {
+        const { error } =
+          (await supabase?.auth.getUser(session.access_token)) ?? {};
+        serverDeleted = error?.code === "user_not_found";
+      } catch {
+        // An offline or unknown result is not proof of deletion.
+      }
+    }
+    if (!serverDeleted) {
+      Alert.alert(
+        t("deleteAccountFailed"),
+        deletionError instanceof Error ? deletionError.message : t("error"),
+      );
+      resumeGuestImports?.();
+      setDeletingAccount(false);
+      return;
+    }
+
+    // A confirmed server deletion must always close the now-invalid session.
+    let localCleanupFailed = false;
+    try {
+      await deleteImportedGuestLists(accountId);
+    } catch {
+      localCleanupFailed = true;
+    }
+    try {
+      await clearDeletedSession();
+    } catch {
+      localCleanupFailed = true;
+    } finally {
+      resumeGuestImports?.();
+      setDeletingAccount(false);
+      router.replace("/(app)");
+    }
+
+    Alert.alert(
+      t("accountDeleted"),
+      [
+        localCleanupFailed ? t("accountDeletedLocalWarning") : null,
+        usedApple ? t("appleRevokeHint") : null,
+      ]
+        .filter(Boolean)
+        .join("\n\n") || undefined,
+    );
+  };
+
+  if (!session) {
+    return (
+      <SafeAreaView
+        style={styles.safe}
+        edges={["top", "bottom", "left", "right"]}
+      >
+        <View style={styles.header}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={t("back")}
+            onPress={() => router.back()}
+            style={styles.back}
+          >
+            <Text style={styles.backText}>‹</Text>
+          </Pressable>
+        </View>
+        <Text style={styles.title}>{t("profile")}</Text>
+        <View style={styles.guestBody}>
+          <View style={styles.avatar}>
+            <NativeIcon name="person" size={42} color={palette.black} />
+          </View>
+          <Text style={styles.guestMessage}>{t("guestProfile")}</Text>
+          <Text style={styles.guestDescription}>{t("saveYourLists")}</Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={t("signIn")}
+            onPress={() => router.push("/(auth)")}
+            style={styles.guestSignIn}
+          >
+            <Text style={styles.guestSignInText}>{t("signIn")}</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
-    <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
+    <SafeAreaView
+      style={styles.safe}
+      edges={["top", "bottom", "left", "right"]}
+    >
       <View style={styles.header}>
         <Pressable
           accessibilityRole="button"
@@ -60,9 +192,8 @@ export default function ProfileScreen() {
         >
           <Text style={styles.backText}>‹</Text>
         </Pressable>
-        <Text style={styles.title}>{t("profile")}</Text>
-        <View style={styles.spacer} />
       </View>
+      <Text style={styles.title}>{t("profile")}</Text>
       <ScrollView
         contentContainerStyle={styles.body}
         keyboardShouldPersistTaps="handled"
@@ -74,7 +205,7 @@ export default function ProfileScreen() {
               style={styles.avatarImage}
             />
           ) : (
-            <NativeIcon name="person" size={38} />
+            <NativeIcon name="person" size={42} color={palette.black} />
           )}
         </View>
         <Text style={styles.displayName}>
@@ -82,7 +213,7 @@ export default function ProfileScreen() {
         </Text>
         <Text style={styles.email}>{user?.email}</Text>
         {profileQuery.isLoading ? (
-          <ActivityIndicator color={colors.tint} />
+          <ActivityIndicator color={palette.black} />
         ) : null}
         {profileQuery.isError ? (
           <Text style={styles.error}>{profileQuery.error.message}</Text>
@@ -107,30 +238,65 @@ export default function ProfileScreen() {
             style={styles.input}
           />
           <Pressable
-            disabled={save.isPending}
+            accessibilityRole="button"
+            accessibilityLabel={t("save")}
+            disabled={save.isPending || deletingAccount}
             onPress={() => save.mutate()}
             style={styles.save}
           >
-            <Text style={styles.saveText}>{t("save")}</Text>
+            {save.isPending ? (
+              <ActivityIndicator color={palette.white} />
+            ) : (
+              <Text style={styles.saveText}>{t("save")}</Text>
+            )}
           </Pressable>
           {save.isError && (
             <Text style={styles.error}>{save.error.message}</Text>
           )}
         </View>
         <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={t("signOut")}
+          disabled={signingOut || deletingAccount}
           onPress={() =>
             Alert.alert(t("signOut"), t("signOutConfirm"), [
               { text: t("cancel"), style: "cancel" },
               {
                 text: t("signOut"),
                 style: "destructive",
-                onPress: () => void signOut(),
+                onPress: () => void handleSignOut(),
               },
             ])
           }
           style={styles.signOut}
         >
-          <Text style={styles.signOutText}>{t("signOut")}</Text>
+          {signingOut ? (
+            <ActivityIndicator color={colors.destructive} />
+          ) : (
+            <Text style={styles.signOutText}>{t("signOut")}</Text>
+          )}
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={t("deleteAccount")}
+          disabled={signingOut || deletingAccount || save.isPending}
+          onPress={() =>
+            Alert.alert(t("deleteAccount"), t("deleteAccountConfirm"), [
+              { text: t("cancel"), style: "cancel" },
+              {
+                text: t("deleteAccount"),
+                style: "destructive",
+                onPress: () => void handleDeleteAccount(),
+              },
+            ])
+          }
+          style={styles.deleteAccount}
+        >
+          {deletingAccount ? (
+            <ActivityIndicator color={colors.destructive} />
+          ) : (
+            <Text style={styles.deleteAccountText}>{t("deleteAccount")}</Text>
+          )}
         </Pressable>
       </ScrollView>
     </SafeAreaView>
@@ -138,92 +304,168 @@ export default function ProfileScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.background },
-  header: {
-    minHeight: 62,
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: spacing.md,
-  },
-  back: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: colors.surface,
-  },
-  backText: { color: colors.text, fontSize: 33, lineHeight: 37, marginTop: -3 },
-  title: {
+  safe: { flex: 1, backgroundColor: palette.background },
+  guestBody: {
     flex: 1,
-    textAlign: "center",
-    color: colors.text,
-    fontSize: 17,
-    fontWeight: "700",
-  },
-  spacer: { width: 40 },
-  body: { padding: spacing.lg, alignItems: "stretch" },
-  avatar: {
-    alignSelf: "center",
-    width: 84,
-    height: 84,
-    borderRadius: 42,
-    backgroundColor: colors.tintSoft,
     alignItems: "center",
     justifyContent: "center",
-    marginVertical: 16,
+    paddingHorizontal: 28,
+    paddingBottom: 120,
   },
-  avatarImage: { width: 84, height: 84, borderRadius: 42 },
-  displayName: {
-    color: colors.text,
-    fontSize: 19,
+  guestMessage: {
+    color: palette.black,
+    fontSize: 21,
     fontWeight: "700",
     textAlign: "center",
-    marginBottom: 4,
+    marginBottom: 10,
   },
-  email: {
-    color: colors.secondaryText,
-    fontSize: 14,
+  guestDescription: {
+    color: palette.muted,
+    fontSize: 15,
+    lineHeight: 22,
     textAlign: "center",
     marginBottom: 24,
   },
-  card: {
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    padding: spacing.md,
-  },
-  label: {
-    color: colors.secondaryText,
-    fontSize: 13,
-    fontWeight: "600",
-    marginBottom: 7,
-    marginLeft: 2,
-  },
-  input: {
-    minHeight: 48,
-    backgroundColor: colors.field,
-    borderRadius: radius.sm,
-    color: colors.text,
-    paddingHorizontal: 13,
-    fontSize: 15,
-    marginBottom: 17,
-  },
-  save: {
-    minHeight: 48,
-    borderRadius: radius.sm,
+  guestSignIn: {
+    minHeight: 52,
+    alignSelf: "stretch",
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: colors.tint,
+    borderRadius: 26,
+    backgroundColor: palette.black,
   },
-  saveText: { color: colors.white, fontSize: 15, fontWeight: "700" },
+  guestSignInText: { color: palette.white, fontSize: 16, fontWeight: "700" },
+  header: {
+    minHeight: 76,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 20,
+  },
+  back: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: palette.white,
+    borderWidth: 1,
+    borderColor: "#DCDCDC",
+    shadowColor: "#000000",
+    shadowOpacity: 0.035,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+  },
+  backText: {
+    color: palette.black,
+    fontSize: 35,
+    lineHeight: 39,
+    marginTop: -3,
+  },
+  title: {
+    color: palette.black,
+    fontSize: 36,
+    fontWeight: "700",
+    letterSpacing: -1.3,
+    marginTop: 4,
+    marginBottom: 14,
+    marginHorizontal: 20,
+  },
+  body: {
+    flexGrow: 1,
+    paddingHorizontal: 20,
+    paddingTop: 8,
+    paddingBottom: 28,
+    alignItems: "stretch",
+  },
+  avatar: {
+    alignSelf: "center",
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    backgroundColor: palette.white,
+    borderWidth: 1,
+    borderColor: palette.border,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 10,
+    marginBottom: 16,
+  },
+  avatarImage: { width: 96, height: 96, borderRadius: 48 },
+  displayName: {
+    color: palette.black,
+    fontSize: 22,
+    fontWeight: "700",
+    letterSpacing: -0.5,
+    textAlign: "center",
+    marginBottom: 6,
+  },
+  email: {
+    color: palette.muted,
+    fontSize: 15,
+    textAlign: "center",
+    marginBottom: 30,
+  },
+  card: {
+    backgroundColor: palette.white,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: palette.border,
+    padding: 20,
+  },
+  label: {
+    color: palette.black,
+    fontSize: 14,
+    fontWeight: "600",
+    marginBottom: 9,
+    marginLeft: 4,
+  },
+  input: {
+    minHeight: 56,
+    backgroundColor: "#FBFBFB",
+    borderRadius: 17,
+    borderWidth: 1,
+    borderColor: palette.border,
+    color: palette.black,
+    paddingHorizontal: 17,
+    fontSize: 16,
+    marginBottom: 18,
+  },
+  save: {
+    minHeight: 56,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: palette.black,
+    marginTop: 2,
+  },
+  saveText: { color: palette.white, fontSize: 16, fontWeight: "700" },
   error: { color: colors.destructive, fontSize: 14, marginTop: 10 },
   signOut: {
     alignItems: "center",
     justifyContent: "center",
-    minHeight: 52,
-    marginTop: 20,
-    backgroundColor: colors.surface,
-    borderRadius: radius.sm,
+    minHeight: 56,
+    marginTop: "auto",
+    marginBottom: 2,
+    backgroundColor: palette.white,
+    borderWidth: 1,
+    borderColor: palette.border,
+    borderRadius: 18,
   },
-  signOutText: { color: colors.destructive, fontSize: 15, fontWeight: "700" },
+  signOutText: { color: palette.black, fontSize: 16, fontWeight: "600" },
+  deleteAccount: {
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: 56,
+    marginTop: 12,
+    marginBottom: 2,
+    backgroundColor: palette.white,
+    borderWidth: 1,
+    borderColor: palette.border,
+    borderRadius: 18,
+  },
+  deleteAccountText: {
+    color: colors.destructive,
+    fontSize: 16,
+    fontWeight: "600",
+  },
 });

@@ -22,6 +22,7 @@ model Profile {
 model TodoList {
   id        String     @id @default(uuid()) @db.Uuid
   ownerId   String     @map("owner_id") @db.Uuid
+  importKey String?    @map("import_key") @db.VarChar(128)
   title     String     @db.VarChar(120)
   comment   String?
   position  Int        @default(0)
@@ -31,6 +32,7 @@ model TodoList {
   items     TodoItem[]
 
   @@index([ownerId, position])
+  @@unique([ownerId, importKey])
   @@map("todo_lists")
 }
 

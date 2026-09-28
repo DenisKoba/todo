@@ -1,5 +1,6 @@
-import { LinearGradient } from "expo-linear-gradient";
-import { useState } from "react";
+import * as AppleAuthentication from "expo-apple-authentication";
+import { useEffect, useState } from "react";
+import { router } from "expo-router";
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -13,11 +14,11 @@ import {
 } from "react-native";
 import { useAuth } from "@/auth/auth-context";
 import { isSupabaseConfigured } from "@/lib/supabase";
-import { gradients, colors, radius, spacing } from "@/theme/tokens";
+import { colors } from "@/theme/tokens";
 import { t } from "@/i18n";
 
 export default function AuthScreen() {
-  const { signIn, signUp, signInWithGoogle } = useAuth();
+  const { signIn, signUp, signInWithGoogle, signInWithApple } = useAuth();
   const [mode, setMode] = useState<"sign-in" | "sign-up">("sign-in");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -25,6 +26,22 @@ export default function AuthScreen() {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  const [appleAvailable, setAppleAvailable] = useState(false);
+
+  useEffect(() => {
+    if (Platform.OS !== "ios") return;
+    let active = true;
+    void AppleAuthentication.isAvailableAsync()
+      .then((available) => {
+        if (active) setAppleAvailable(available);
+      })
+      .catch(() => {
+        if (active) setAppleAvailable(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const run = async (action: () => Promise<void>) => {
     setBusy(true);
@@ -41,15 +58,18 @@ export default function AuthScreen() {
 
   const submit = () =>
     run(async () => {
-      if (mode === "sign-in") await signIn(email.trim(), password);
-      else {
+      if (mode === "sign-in") {
+        await signIn(email.trim(), password);
+        router.replace("/(app)");
+      } else {
         const hasSession = await signUp(email.trim(), password, name);
-        if (!hasSession) setNotice(t("checkEmail"));
+        if (hasSession) router.replace("/(app)");
+        else setNotice(t("checkEmail"));
       }
     });
 
   return (
-    <LinearGradient colors={[...gradients.auth]} style={styles.gradient}>
+    <View style={styles.screen}>
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
@@ -135,6 +155,28 @@ export default function AuthScreen() {
               <Text style={styles.googleText}>{t("google")}</Text>
             </Pressable>
 
+            {appleAvailable && (
+              <View
+                pointerEvents={busy || !isSupabaseConfigured ? "none" : "auto"}
+                style={[
+                  styles.appleButtonContainer,
+                  (busy || !isSupabaseConfigured) && styles.disabled,
+                ]}
+              >
+                <AppleAuthentication.AppleAuthenticationButton
+                  buttonType={
+                    AppleAuthentication.AppleAuthenticationButtonType.CONTINUE
+                  }
+                  buttonStyle={
+                    AppleAuthentication.AppleAuthenticationButtonStyle.BLACK
+                  }
+                  cornerRadius={18}
+                  style={styles.appleButton}
+                  onPress={() => void run(signInWithApple)}
+                />
+              </View>
+            )}
+
             {!isSupabaseConfigured && (
               <Text style={styles.setup}>{t("configuration")}</Text>
             )}
@@ -149,12 +191,19 @@ export default function AuthScreen() {
                 {mode === "sign-in" ? t("switchToSignUp") : t("switchToSignIn")}
               </Text>
             </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => router.replace("/(app)")}
+              style={styles.guestButton}
+            >
+              <Text style={styles.guestText}>{t("continueAsGuest")}</Text>
+            </Pressable>
           </View>
 
           <Text style={styles.footnote}>{t("footnote")}</Text>
         </ScrollView>
       </KeyboardAvoidingView>
-    </LinearGradient>
+    </View>
   );
 }
 
@@ -187,137 +236,152 @@ function Field(props: {
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
-  gradient: { flex: 1 },
+  screen: { flex: 1, backgroundColor: "#F7F7F7" },
   content: {
     flexGrow: 1,
-    justifyContent: "center",
-    paddingHorizontal: spacing.lg,
-    paddingVertical: 56,
+    paddingHorizontal: 24,
+    paddingTop: 72,
+    paddingBottom: 32,
   },
   brandMark: {
-    width: 54,
-    height: 54,
-    borderRadius: 18,
-    backgroundColor: colors.tint,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    borderWidth: 1,
+    borderColor: "#DFDFDF",
+    backgroundColor: "#FFFFFF",
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 18,
-    shadowColor: colors.tint,
-    shadowOpacity: 0.25,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 8 },
+    marginBottom: 24,
+    shadowColor: "#000000",
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
   },
   brandCheck: {
-    color: colors.white,
-    fontSize: 29,
-    fontWeight: "700",
+    color: "#111111",
+    fontSize: 28,
+    fontWeight: "600",
     marginTop: -2,
   },
   brand: {
-    color: colors.text,
-    fontSize: 38,
-    fontWeight: "700",
-    letterSpacing: -1.2,
+    color: "#090909",
+    fontSize: 40,
+    fontWeight: "800",
+    letterSpacing: -1.6,
   },
   tagline: {
-    color: colors.secondaryText,
-    fontSize: 16,
-    marginTop: 5,
-    marginBottom: 30,
+    color: "#777777",
+    fontSize: 15,
+    lineHeight: 22,
+    marginTop: 8,
+    marginBottom: 36,
   },
   card: {
-    backgroundColor: colors.surface,
-    padding: spacing.lg,
-    borderRadius: radius.lg,
-    shadowColor: "#262A38",
-    shadowOpacity: 0.08,
-    shadowRadius: 24,
-    shadowOffset: { width: 0, height: 12 },
-    elevation: 5,
+    backgroundColor: "#FFFFFF",
+    padding: 22,
+    borderRadius: 28,
+    borderWidth: 1,
+    borderColor: "#E3E3E3",
+    shadowColor: "#000000",
+    shadowOpacity: 0.025,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 1,
   },
   heading: {
-    color: colors.text,
-    fontSize: 23,
+    color: "#101010",
+    fontSize: 25,
     fontWeight: "700",
-    marginBottom: spacing.md,
+    letterSpacing: -0.6,
+    marginBottom: 26,
   },
-  field: { marginBottom: spacing.md },
+  field: { marginBottom: 18 },
   label: {
-    color: colors.secondaryText,
-    fontSize: 13,
+    color: "#303030",
+    fontSize: 14,
     fontWeight: "600",
-    marginBottom: 7,
-    marginLeft: 2,
+    marginBottom: 9,
+    marginLeft: 4,
   },
   input: {
-    minHeight: 52,
-    borderRadius: radius.sm,
-    borderColor: colors.separator,
-    borderWidth: StyleSheet.hairlineWidth,
-    backgroundColor: colors.field,
-    paddingHorizontal: 15,
-    color: colors.text,
+    minHeight: 56,
+    borderRadius: 17,
+    borderColor: "#E3E3E3",
+    borderWidth: 1,
+    backgroundColor: "#FBFBFB",
+    paddingHorizontal: 17,
+    color: "#111111",
     fontSize: 16,
   },
   primaryButton: {
-    minHeight: 52,
-    borderRadius: radius.sm,
-    backgroundColor: colors.tint,
+    minHeight: 56,
+    borderRadius: 18,
+    backgroundColor: "#151515",
     alignItems: "center",
     justifyContent: "center",
-    marginTop: 6,
+    marginTop: 8,
   },
-  primaryText: { color: colors.white, fontSize: 16, fontWeight: "700" },
+  primaryText: { color: "#FFFFFF", fontSize: 16, fontWeight: "700" },
   googleButton: {
-    minHeight: 52,
+    minHeight: 56,
     flexDirection: "row",
     gap: 12,
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: radius.sm,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.separator,
-    backgroundColor: colors.surface,
-    marginTop: 4,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "#E1E1E1",
+    backgroundColor: "#FFFFFF",
   },
-  googleG: { color: "#4285F4", fontSize: 19, fontWeight: "800" },
-  googleText: { color: colors.text, fontSize: 15, fontWeight: "600" },
+  googleG: { color: "#111111", fontSize: 19, fontWeight: "800" },
+  googleText: { color: "#111111", fontSize: 15, fontWeight: "600" },
+  appleButtonContainer: { marginTop: 12 },
+  appleButton: { width: "100%", height: 56 },
   divider: {
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-    marginVertical: 19,
+    marginVertical: 21,
   },
   line: {
     flex: 1,
-    height: StyleSheet.hairlineWidth,
-    backgroundColor: colors.separator,
+    height: 1,
+    backgroundColor: "#E7E7E7",
   },
-  or: { color: colors.secondaryText, fontSize: 13 },
-  notice: { color: colors.success, fontSize: 14, marginBottom: 12 },
+  or: { color: "#8A8A8A", fontSize: 13 },
+  notice: { color: colors.success, fontSize: 14, marginBottom: 14 },
   error: { color: colors.destructive, fontSize: 14, marginBottom: 12 },
   setup: {
-    color: colors.secondaryText,
+    color: "#777777",
     fontSize: 13,
     lineHeight: 19,
     textAlign: "center",
-    marginTop: 14,
+    marginTop: 16,
   },
   switchText: {
-    color: colors.tint,
+    color: "#171717",
     textAlign: "center",
-    fontSize: 14,
-    fontWeight: "600",
-    marginTop: 20,
+    fontSize: 15,
+    fontWeight: "700",
+    marginTop: 24,
   },
+  guestButton: {
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: 48,
+    marginTop: 8,
+  },
+  guestText: { color: "#777777", fontSize: 15, fontWeight: "600" },
   footnote: {
-    color: colors.secondaryText,
+    color: "#929292",
     fontSize: 13,
     lineHeight: 19,
     textAlign: "center",
-    marginTop: 24,
+    marginTop: "auto",
+    paddingTop: 28,
     paddingHorizontal: 16,
   },
-  pressed: { opacity: 0.78, transform: [{ scale: 0.99 }] },
-  disabled: { opacity: 0.55 },
+  pressed: { opacity: 0.78 },
+  disabled: { opacity: 0.45 },
 });

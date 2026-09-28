@@ -1,516 +1,620 @@
+import { Host, Icon } from "@expo/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { BlurTargetView, BlurView } from "expo-blur";
 import { router } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   Alert,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
   Pressable,
   ScrollView,
-  Share,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
-import { api, type Profile, type TodoItem, type TodoList } from "@/api/client";
-import { NativeIcon } from "@/components/native-icon";
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
+import type { TodoList } from "@/api/client";
 import { useAuth } from "@/auth/auth-context";
+import { NativeIcon } from "@/components/native-icon";
+import {
+  createList as saveList,
+  getLists,
+  listQueryKey,
+} from "@/data/todo-repository";
 import { t } from "@/i18n";
-import { colors, radius, spacing } from "@/theme/tokens";
-import { TaskRow } from "@/components/task-row";
+
+const palette = {
+  background: "#F7F7F7",
+  white: "#FFFFFF",
+  black: "#111111",
+  muted: "#929292",
+  border: "#E5E5E5",
+  error: "#C43F48",
+} as const;
+
+const icons = {
+  search: Icon.select({
+    ios: "magnifyingglass",
+    android: import("@expo/material-symbols/search.xml"),
+  }),
+  more: Icon.select({
+    ios: "ellipsis",
+    android: import("@expo/material-symbols/more_horiz.xml"),
+  }),
+  chevron: Icon.select({
+    ios: "chevron.right",
+    android: import("@expo/material-symbols/chevron_right.xml"),
+  }),
+  document: Icon.select({
+    ios: "doc.on.doc.fill",
+    android: import("@expo/material-symbols/content_copy.xml"),
+  }),
+} as const;
+
+function ScreenIcon({
+  name,
+  size,
+  color = palette.black,
+}: {
+  name: keyof typeof icons;
+  size: number;
+  color?: string;
+}) {
+  return (
+    <Host style={{ width: size, height: size }} pointerEvents="none">
+      <Icon name={icons[name]} size={size} color={color} />
+    </Host>
+  );
+}
 
 export default function ListsScreen() {
-  const { user, session } = useAuth();
+  const insets = useSafeAreaInsets();
+  const { session } = useAuth();
   const queryClient = useQueryClient();
-  const [selectedListId, setSelectedListId] = useState("");
-  const [selectedTasks, setSelectedTasks] = useState<string[]>([]);
+  const queryKey = listQueryKey(session);
+  const [search, setSearch] = useState("");
   const [listTitle, setListTitle] = useState("");
   const [listComment, setListComment] = useState("");
-  const [taskTitle, setTaskTitle] = useState("");
-  const [taskComment, setTaskComment] = useState("");
+  const [isCreateListOpen, setCreateListOpen] = useState(false);
+  const [headerHeight, setHeaderHeight] = useState(160 + insets.top);
+  const [footerHeight, setFooterHeight] = useState(82 + insets.bottom);
+  const blurTarget = useRef<View>(null);
 
   const listsQuery = useQuery({
-    queryKey: ["lists", user?.id],
-    enabled: Boolean(session),
-    queryFn: () => api<TodoList[]>("/lists", session!),
-  });
-  const profileQuery = useQuery({
-    queryKey: ["profile", user?.id],
-    enabled: Boolean(session),
-    queryFn: () => api<Profile>("/me", session!),
+    queryKey,
+    queryFn: () => getLists(session),
   });
   const lists = listsQuery.data ?? [];
-
-  useEffect(() => {
-    if (!selectedListId && lists.length) setSelectedListId(lists[0].id);
-    if (
-      selectedListId &&
-      lists.length &&
-      !lists.some((list) => list.id === selectedListId)
-    ) {
-      setSelectedListId(lists[0].id);
-    }
-  }, [lists, selectedListId]);
-
-  const activeList = useMemo(
-    () => lists.find((list) => list.id === selectedListId),
-    [lists, selectedListId],
-  );
-  const refresh = () =>
-    queryClient.invalidateQueries({ queryKey: ["lists", user?.id] });
+  const filteredLists = useMemo(() => {
+    const term = search.trim().toLocaleLowerCase();
+    if (!term) return lists;
+    return lists.filter(
+      (list) =>
+        list.title.toLocaleLowerCase().includes(term) ||
+        list.items.some((item) =>
+          item.title.toLocaleLowerCase().includes(term),
+        ),
+    );
+  }, [lists, search]);
 
   const createList = useMutation({
     mutationFn: () =>
-      api<TodoList>("/lists", session!, {
-        method: "POST",
-        body: JSON.stringify({
-          title: listTitle.trim(),
-          comment: listComment.trim() || null,
-        }),
+      saveList(session, {
+        title: listTitle.trim(),
+        comment: listComment.trim() || null,
       }),
     onSuccess: (list) => {
       setListTitle("");
       setListComment("");
-      setSelectedListId(list.id);
-      void refresh();
+      setCreateListOpen(false);
+      queryClient.setQueryData<TodoList[]>(queryKey, (current) =>
+        current?.some((entry) => entry.id === list.id)
+          ? current
+          : [...(current ?? []), { ...list, items: list.items ?? [] }],
+      );
+      void queryClient.invalidateQueries({ queryKey });
+      router.push({ pathname: "/(app)/list/[id]", params: { id: list.id } });
     },
   });
-  const createTask = useMutation({
-    mutationFn: () =>
-      api<TodoItem>(`/lists/${activeList!.id}/items`, session!, {
-        method: "POST",
-        body: JSON.stringify({
-          title: taskTitle.trim(),
-          comment: taskComment.trim() || null,
-        }),
-      }),
-    onSuccess: () => {
-      setTaskTitle("");
-      setTaskComment("");
-      void refresh();
-    },
-  });
-  const setCompleted = useMutation({
-    mutationFn: ({ item, completed }: { item: TodoItem; completed: boolean }) =>
-      api(`/items/${item.id}`, session!, {
-        method: "PATCH",
-        body: JSON.stringify({ completed }),
-      }),
-    onSuccess: refresh,
-  });
-  const deleteTask = async (item: TodoItem) => {
-    Alert.alert(t("delete"), t("deleteTask"), [
-      { text: t("cancel"), style: "cancel" },
-      {
-        text: t("delete"),
-        style: "destructive",
-        onPress: () =>
-          void api(`/items/${item.id}`, session!, { method: "DELETE" }).then(
-            refresh,
-          ),
-      },
-    ]);
+
+  const openCreateList = () => {
+    setListTitle("");
+    setListComment("");
+    createList.reset();
+    setCreateListOpen(true);
   };
-  const deleteList = (list: TodoList) => {
-    Alert.alert(t("delete"), t("deleteList"), [
-      { text: t("cancel"), style: "cancel" },
-      {
-        text: t("delete"),
-        style: "destructive",
-        onPress: () =>
-          void api(`/lists/${list.id}`, session!, { method: "DELETE" }).then(
-            refresh,
-          ),
-      },
-    ]);
+  const closeCreateList = () => {
+    if (createList.isPending) return;
+    setCreateListOpen(false);
+    createList.reset();
   };
-  const bulkDelete = () => {
-    Alert.alert(
-      t("delete"),
-      `${t("deleteSelected")} (${selectedTasks.length})?`,
-      [
-        { text: t("cancel"), style: "cancel" },
-        {
-          text: t("delete"),
-          style: "destructive",
-          onPress: () => {
-            void Promise.all(
-              selectedTasks.map((id) =>
-                api(`/items/${id}`, session!, { method: "DELETE" }),
-              ),
-            ).then(() => {
-              setSelectedTasks([]);
-              void refresh();
-            });
-          },
-        },
-      ],
-    );
-  };
-  const toggleSelection = (itemId: string) =>
-    setSelectedTasks((previous) =>
-      previous.includes(itemId)
-        ? previous.filter((id) => id !== itemId)
-        : [...previous, itemId],
-    );
-  const shareList = async () => {
-    if (!activeList) return;
-    const text = [
-      activeList.title,
-      activeList.comment,
-      ...activeList.items.map(
-        (item) =>
-          `${item.completed ? "✓" : "○"} ${item.title}${item.comment ? ` — ${item.comment}` : ""}`,
-      ),
-    ]
-      .filter(Boolean)
-      .join("\n");
-    await Share.share({ title: activeList.title, message: text });
-  };
+  const openProfile = () => router.push("/(app)/profile");
 
   return (
-    <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.eyebrow}>
-            {profileQuery.data?.displayName
-              ? `${t("hello")}, ${profileQuery.data.displayName}`
-              : t("yourSpace")}
-          </Text>
-          <Text style={styles.title}>{t("myLists")}</Text>
-        </View>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={t("profile")}
-          onPress={() => router.push("/(app)/profile")}
-          style={styles.profileButton}
-        >
-          <NativeIcon name="person" size={25} />
-        </Pressable>
-      </View>
-
-      {lists.length > 0 && (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.listStrip}
-        >
-          {lists.map((list) => (
-            <Pressable
-              key={list.id}
-              onPress={() => {
-                setSelectedListId(list.id);
-                setSelectedTasks([]);
-              }}
-              onLongPress={() => deleteList(list)}
-              style={[
-                styles.listPill,
-                list.id === selectedListId && styles.listPillActive,
-              ]}
-            >
-              <Text
-                numberOfLines={1}
-                style={[
-                  styles.listPillText,
-                  list.id === selectedListId && styles.listPillTextActive,
-                ]}
-              >
-                {list.title}
-              </Text>
-            </Pressable>
-          ))}
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={t("addList")}
-            onPress={() => {
-              setListTitle("");
-              setListComment("");
-            }}
-            style={styles.addPill}
-          >
-            <NativeIcon name="add" size={20} />
-          </Pressable>
-        </ScrollView>
-      )}
-
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.body}
-        keyboardShouldPersistTaps="handled"
+    <View style={styles.safe}>
+      <KeyboardAvoidingView
+        style={styles.screen}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
-        {listsQuery.isLoading && (
-          <Text style={styles.muted}>{t("loading")}</Text>
-        )}
-        {listsQuery.isError && (
-          <Text style={styles.error}>{listsQuery.error.message}</Text>
-        )}
-
-        {activeList ? (
-          <>
-            <View style={styles.listTitleRow}>
-              <View style={styles.flex}>
-                <Text style={styles.listTitle}>{activeList.title}</Text>
-                {activeList.comment ? (
-                  <Text style={styles.listNote}>{activeList.comment}</Text>
-                ) : null}
-              </View>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={t("share")}
-                onPress={() => void shareList()}
-                style={styles.iconButton}
-              >
-                <NativeIcon name="share" />
-              </Pressable>
-            </View>
-            {activeList.items.length === 0 ? (
-              <Text style={styles.empty}>{t("noTasks")}</Text>
-            ) : (
-              <View style={styles.taskCard}>
-                {activeList.items.map((item, index) => (
-                  <View
-                    key={item.id}
-                    style={index > 0 ? styles.taskBorder : undefined}
-                  >
-                    <TaskRow
-                      item={item}
-                      selected={selectedTasks.includes(item.id)}
-                      selectionMode={selectedTasks.length > 0}
-                      onToggleComplete={() =>
-                        setCompleted.mutate({
-                          item,
-                          completed: !item.completed,
+        <View style={styles.screen}>
+          <BlurTargetView ref={blurTarget} style={styles.scroll}>
+            <ScrollView
+              style={styles.scroll}
+              contentContainerStyle={[
+                styles.scrollContent,
+                {
+                  paddingTop: headerHeight + 8,
+                  paddingBottom: footerHeight + 12,
+                  paddingLeft: 20 + insets.left,
+                  paddingRight: 20 + insets.right,
+                },
+                lists.length === 0 && styles.emptyScrollContent,
+              ]}
+              keyboardShouldPersistTaps="handled"
+            >
+              {listsQuery.isLoading ? (
+                <Text style={styles.statusText}>{t("loading")}</Text>
+              ) : listsQuery.isError ? (
+                <View style={styles.loadError}>
+                  <Text accessibilityRole="alert" style={styles.errorText}>
+                    {listsQuery.error.message}
+                  </Text>
+                  <Pressable onPress={() => void listsQuery.refetch()}>
+                    <Text style={styles.retryText}>{t("retry")}</Text>
+                  </Pressable>
+                </View>
+              ) : lists.length === 0 ? (
+                <Text style={styles.statusText}>{t("noLists")}</Text>
+              ) : filteredLists.length === 0 ? (
+                <Text style={styles.statusText}>No matching lists.</Text>
+              ) : (
+                <View style={styles.grid}>
+                  {filteredLists.map((list) => (
+                    <Pressable
+                      key={list.id}
+                      accessibilityRole="button"
+                      accessibilityLabel={`${list.title}, ${list.items.length} tasks`}
+                      onPress={() =>
+                        router.push({
+                          pathname: "/(app)/list/[id]",
+                          params: { id: list.id },
                         })
                       }
-                      onToggleSelection={() => toggleSelection(item.id)}
-                      onDelete={() => void deleteTask(item)}
-                    />
-                  </View>
-                ))}
-              </View>
-            )}
-            <View style={styles.formCard}>
-              <Text style={styles.formHeading}>{t("addTask")}</Text>
-              <TextInput
-                value={taskTitle}
-                onChangeText={setTaskTitle}
-                placeholder={t("taskTitle")}
-                placeholderTextColor={colors.secondaryText}
-                style={styles.input}
-                returnKeyType="done"
-              />
-              <TextInput
-                value={taskComment}
-                onChangeText={setTaskComment}
-                placeholder={t("taskComment")}
-                placeholderTextColor={colors.secondaryText}
-                style={styles.input}
-              />
+                      style={({ pressed }) => [
+                        styles.card,
+                        pressed && styles.cardPressed,
+                      ]}
+                    >
+                      <View style={styles.cardHeader}>
+                        <Text style={styles.cardTitle} numberOfLines={1}>
+                          {list.title}
+                        </Text>
+                        <Text style={styles.cardCount}>
+                          {list.items.length}
+                        </Text>
+                        <ScreenIcon
+                          name="chevron"
+                          size={17}
+                          color={palette.muted}
+                        />
+                      </View>
+                      <View style={styles.cardDivider} />
+                      <View style={styles.cardPreview}>
+                        {list.items.slice(0, 4).map((item) => (
+                          <Text
+                            key={item.id}
+                            style={styles.previewText}
+                            numberOfLines={1}
+                          >
+                            {item.title}
+                          </Text>
+                        ))}
+                      </View>
+                    </Pressable>
+                  ))}
+                </View>
+              )}
+            </ScrollView>
+          </BlurTargetView>
+
+          <View
+            style={styles.headerOverlay}
+            onLayout={(event) =>
+              setHeaderHeight(event.nativeEvent.layout.height)
+            }
+          >
+            <BlurView
+              pointerEvents="none"
+              blurTarget={blurTarget}
+              blurMethod="dimezisBlurViewSdk31Plus"
+              intensity={70}
+              tint="light"
+              style={StyleSheet.absoluteFill}
+            />
+            <View pointerEvents="none" style={styles.glassTint} />
+            <View
+              style={[
+                styles.toolbar,
+                {
+                  paddingTop: insets.top + 18,
+                  paddingLeft: 20 + insets.left,
+                  paddingRight: 20 + insets.right,
+                },
+              ]}
+            >
               <Pressable
-                disabled={!taskTitle.trim() || createTask.isPending}
-                onPress={() => createTask.mutate()}
-                style={[
-                  styles.actionButton,
-                  (!taskTitle.trim() || createTask.isPending) &&
-                    styles.disabled,
-                ]}
+                accessibilityRole="button"
+                accessibilityLabel={t("profile")}
+                onPress={openProfile}
+                style={styles.circleButton}
               >
-                <Text style={styles.actionText}>{t("addTask")}</Text>
+                <NativeIcon name="person" size={23} color={palette.black} />
+              </Pressable>
+              <View style={styles.toolbarActions}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={t("addList")}
+                  onPress={openCreateList}
+                  style={styles.circleButton}
+                >
+                  <NativeIcon name="add" size={28} color={palette.black} />
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="More options"
+                  onPress={() =>
+                    Alert.alert(t("myLists"), undefined, [
+                      { text: t("profile"), onPress: openProfile },
+                      { text: t("cancel"), style: "cancel" },
+                    ])
+                  }
+                  style={styles.circleButton}
+                >
+                  <ScreenIcon name="more" size={25} />
+                </Pressable>
+              </View>
+            </View>
+            <Text
+              style={[
+                styles.title,
+                {
+                  marginLeft: 20 + insets.left,
+                  marginRight: 20 + insets.right,
+                },
+              ]}
+            >
+              {t("myLists")}
+            </Text>
+          </View>
+
+          <View
+            style={styles.footerOverlay}
+            onLayout={(event) =>
+              setFooterHeight(event.nativeEvent.layout.height)
+            }
+          >
+            <BlurView
+              pointerEvents="none"
+              blurTarget={blurTarget}
+              blurMethod="dimezisBlurViewSdk31Plus"
+              intensity={70}
+              tint="light"
+              style={StyleSheet.absoluteFill}
+            />
+            <View pointerEvents="none" style={styles.glassTint} />
+            <View
+              style={[
+                styles.searchArea,
+                {
+                  paddingBottom: insets.bottom + 18,
+                  paddingLeft: 24 + insets.left,
+                  paddingRight: 24 + insets.right,
+                },
+              ]}
+            >
+              <View style={styles.searchBar}>
+                <ScreenIcon name="search" size={22} />
+                <TextInput
+                  accessibilityLabel="Search lists and tasks"
+                  value={search}
+                  onChangeText={setSearch}
+                  placeholder="Search"
+                  placeholderTextColor={palette.muted}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  returnKeyType="search"
+                  style={styles.searchInput}
+                />
+              </View>
+            </View>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+
+      <Modal
+        visible={isCreateListOpen}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={closeCreateList}
+      >
+        <SafeAreaView
+          style={styles.modalSafe}
+          edges={["top", "bottom", "left", "right"]}
+        >
+          <KeyboardAvoidingView
+            style={styles.screen}
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+          >
+            <View style={styles.modalToolbar}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={t("cancel")}
+                disabled={createList.isPending}
+                onPress={closeCreateList}
+                style={styles.modalToolbarAction}
+              >
+                <Text style={styles.cancelText}>{t("cancel")}</Text>
+              </Pressable>
+              <Text style={styles.modalTitle}>{t("addList")}</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Add"
+                disabled={!listTitle.trim() || createList.isPending}
+                onPress={() => createList.mutate()}
+                style={styles.modalToolbarAction}
+              >
+                <Text
+                  style={[
+                    styles.addText,
+                    (!listTitle.trim() || createList.isPending) &&
+                      styles.addTextDisabled,
+                  ]}
+                >
+                  Add
+                </Text>
               </Pressable>
             </View>
-          </>
-        ) : lists.length === 0 &&
-          !listsQuery.isLoading &&
-          !listsQuery.isError ? (
-          <Text style={styles.empty}>{t("noLists")}</Text>
-        ) : null}
-
-        <View style={[styles.formCard, styles.newListForm]}>
-          <Text style={styles.formHeading}>{t("addList")}</Text>
-          <TextInput
-            value={listTitle}
-            onChangeText={setListTitle}
-            placeholder={t("listName")}
-            placeholderTextColor={colors.secondaryText}
-            style={styles.input}
-          />
-          <TextInput
-            value={listComment}
-            onChangeText={setListComment}
-            placeholder={t("listComment")}
-            placeholderTextColor={colors.secondaryText}
-            style={styles.input}
-          />
-          <Pressable
-            disabled={!listTitle.trim() || createList.isPending}
-            onPress={() => createList.mutate()}
-            style={[
-              styles.actionButton,
-              (!listTitle.trim() || createList.isPending) && styles.disabled,
-            ]}
-          >
-            <Text style={styles.actionText}>{t("addList")}</Text>
-          </Pressable>
-          {createList.isError && (
-            <Text style={styles.error}>{createList.error.message}</Text>
-          )}
-        </View>
-        {selectedTasks.length > 0 && (
-          <Pressable style={styles.bulkButton} onPress={bulkDelete}>
-            <NativeIcon name="delete" />
-            <Text style={styles.bulkText}>
-              {t("deleteSelected")} · {selectedTasks.length}
-            </Text>
-          </Pressable>
-        )}
-      </ScrollView>
-    </SafeAreaView>
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={styles.modalBody}
+            >
+              <View style={styles.listIconCircle}>
+                <ScreenIcon name="document" size={40} />
+              </View>
+              <TextInput
+                accessibilityLabel={t("listName")}
+                value={listTitle}
+                onChangeText={setListTitle}
+                placeholder={t("listName")}
+                placeholderTextColor={palette.muted}
+                style={styles.listNameInput}
+                returnKeyType="next"
+                autoFocus
+              />
+              <TextInput
+                accessibilityLabel={t("listComment")}
+                value={listComment}
+                onChangeText={setListComment}
+                placeholder={t("listComment")}
+                placeholderTextColor={palette.muted}
+                style={styles.listCommentInput}
+                multiline
+              />
+              {createList.isError ? (
+                <Text accessibilityRole="alert" style={styles.errorText}>
+                  {createList.error.message}
+                </Text>
+              ) : null}
+            </ScrollView>
+          </KeyboardAvoidingView>
+        </SafeAreaView>
+      </Modal>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.background },
-  header: {
-    paddingHorizontal: spacing.lg,
-    paddingTop: 12,
-    paddingBottom: 18,
+  safe: { flex: 1, backgroundColor: palette.background },
+  screen: { flex: 1 },
+  headerOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 1,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "rgba(180,180,180,0.35)",
+  },
+  footerOverlay: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    zIndex: 1,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "rgba(180,180,180,0.35)",
+  },
+  glassTint: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    backgroundColor: "rgba(247,247,247,0.32)",
+  },
+  toolbar: {
+    paddingHorizontal: 20,
+    paddingTop: 18,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
   },
-  eyebrow: {
-    color: colors.secondaryText,
-    fontSize: 11,
-    letterSpacing: 1.5,
-    fontWeight: "700",
-    marginBottom: 4,
+  toolbarActions: { flexDirection: "row", gap: 12 },
+  circleButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: "rgba(255,255,255,0.7)",
+    borderWidth: 1,
+    borderColor: "#DCDCDC",
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#000000",
+    shadowOpacity: 0.035,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
   },
   title: {
-    color: colors.text,
-    fontSize: 31,
+    color: palette.black,
+    fontSize: 36,
     fontWeight: "700",
-    letterSpacing: -0.7,
-  },
-  profileButton: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
-    backgroundColor: colors.surface,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  listStrip: {
-    paddingHorizontal: spacing.lg,
-    paddingBottom: 16,
-    gap: 8,
-    alignItems: "center",
-  },
-  listPill: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: radius.pill,
-    backgroundColor: colors.surface,
-    maxWidth: 180,
-  },
-  listPillActive: { backgroundColor: colors.tintSoft },
-  listPillText: {
-    color: colors.secondaryText,
-    fontSize: 14,
-    fontWeight: "600",
-  },
-  listPillTextActive: { color: colors.tint },
-  addPill: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: colors.surface,
-    alignItems: "center",
-    justifyContent: "center",
+    letterSpacing: -1.3,
+    marginTop: 22,
+    marginBottom: 23,
+    marginHorizontal: 20,
   },
   scroll: { flex: 1 },
-  body: { paddingHorizontal: spacing.lg, paddingBottom: 44 },
-  listTitleRow: {
+  scrollContent: { paddingHorizontal: 20, paddingBottom: 30 },
+  emptyScrollContent: { flexGrow: 1, justifyContent: "center" },
+  grid: {
     flexDirection: "row",
-    alignItems: "center",
-    marginTop: 5,
-    marginBottom: 18,
-    gap: 12,
+    flexWrap: "wrap",
+    justifyContent: "space-between",
+    rowGap: 16,
   },
-  flex: { flex: 1 },
-  listTitle: {
-    color: colors.text,
-    fontSize: 25,
-    fontWeight: "700",
-    letterSpacing: -0.4,
+  card: {
+    width: "48%",
+    minHeight: 180,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: palette.white,
+    paddingHorizontal: 15,
+    paddingTop: 17,
+    paddingBottom: 14,
   },
-  listNote: { color: colors.secondaryText, fontSize: 14, marginTop: 5 },
-  iconButton: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: colors.surface,
-  },
-  taskCard: {
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    paddingHorizontal: 14,
-    marginBottom: 18,
-  },
-  taskBorder: {
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.separator,
-  },
-  empty: {
-    color: colors.secondaryText,
-    fontSize: 15,
-    lineHeight: 23,
-    textAlign: "center",
-    paddingVertical: 25,
-  },
-  muted: { color: colors.secondaryText, fontSize: 15, marginVertical: 20 },
-  error: { color: colors.destructive, fontSize: 14, marginTop: 10 },
-  formCard: {
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    padding: 16,
-    marginBottom: 16,
-  },
-  newListForm: { marginTop: 16 },
-  formHeading: {
-    color: colors.text,
+  cardPressed: { opacity: 0.65 },
+  cardHeader: { flexDirection: "row", alignItems: "center", gap: 4 },
+  cardTitle: {
+    color: palette.black,
     fontSize: 17,
     fontWeight: "700",
-    marginBottom: 13,
+    letterSpacing: -0.4,
+    flex: 1,
   },
-  input: {
-    minHeight: 47,
-    borderRadius: radius.sm,
-    backgroundColor: colors.field,
-    paddingHorizontal: 13,
-    color: colors.text,
-    fontSize: 15,
-    marginBottom: 10,
+  cardCount: { color: palette.muted, fontSize: 16 },
+  cardDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: "#DADADA",
+    marginTop: 12,
+    marginBottom: 9,
   },
-  actionButton: {
-    minHeight: 46,
-    borderRadius: radius.sm,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: colors.tint,
-    marginTop: 2,
+  cardPreview: { gap: 4 },
+  previewText: { color: palette.black, fontSize: 15, lineHeight: 22 },
+  statusText: {
+    color: palette.muted,
+    fontSize: 16,
+    lineHeight: 24,
+    textAlign: "center",
+    alignSelf: "center",
+    marginVertical: 24,
   },
-  actionText: { color: colors.white, fontSize: 15, fontWeight: "700" },
-  disabled: { opacity: 0.5 },
-  bulkButton: {
-    minHeight: 48,
-    borderRadius: radius.sm,
+  errorText: { color: palette.error, fontSize: 14, marginTop: 14 },
+  loadError: { alignItems: "center", paddingHorizontal: 20 },
+  retryText: {
+    color: palette.black,
+    fontSize: 16,
+    fontWeight: "700",
+    marginTop: 18,
+  },
+  searchArea: {
+    paddingHorizontal: 24,
+    paddingTop: 12,
+    paddingBottom: 18,
+  },
+  searchBar: {
+    height: 52,
+    borderRadius: 27,
+    borderWidth: 1,
+    borderColor: "#D9D9D9",
+    backgroundColor: "rgba(255,255,255,0.72)",
     flexDirection: "row",
-    gap: 9,
-    justifyContent: "center",
     alignItems: "center",
-    backgroundColor: colors.tintSoft,
+    gap: 11,
+    paddingHorizontal: 16,
+    shadowColor: "#000000",
+    shadowOpacity: 0.04,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
   },
-  bulkText: { color: colors.destructive, fontSize: 15, fontWeight: "700" },
+  searchInput: {
+    flex: 1,
+    color: palette.black,
+    fontSize: 16,
+    paddingVertical: 0,
+  },
+  modalSafe: { flex: 1, backgroundColor: palette.background },
+  modalToolbar: {
+    height: 64,
+    paddingHorizontal: 20,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  modalToolbarAction: {
+    width: 72,
+    minHeight: 44,
+    borderRadius: 22,
+    backgroundColor: palette.white,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  cancelText: { color: palette.black, fontSize: 16, textAlign: "center" },
+  modalTitle: { color: palette.black, fontSize: 17, fontWeight: "700" },
+  addText: {
+    color: palette.black,
+    fontSize: 16,
+    fontWeight: "700",
+    textAlign: "center",
+  },
+  addTextDisabled: { color: palette.muted },
+  modalBody: { paddingHorizontal: 20, paddingTop: 25 },
+  listIconCircle: {
+    width: 86,
+    height: 86,
+    borderRadius: 43,
+    alignSelf: "center",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: palette.white,
+    marginBottom: 28,
+  },
+  listNameInput: {
+    minHeight: 92,
+    borderRadius: 20,
+    backgroundColor: palette.white,
+    color: palette.black,
+    fontSize: 28,
+    fontWeight: "600",
+    paddingHorizontal: 20,
+    marginBottom: 12,
+  },
+  listCommentInput: {
+    minHeight: 82,
+    borderRadius: 20,
+    backgroundColor: palette.white,
+    color: palette.black,
+    fontSize: 16,
+    paddingHorizontal: 20,
+    paddingTop: 18,
+    textAlignVertical: "top",
+  },
 });

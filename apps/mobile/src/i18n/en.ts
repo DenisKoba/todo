@@ -7,6 +7,13 @@ export const en = {
   createAccount: "Create your account",
   signIn: "Sign in",
   signUp: "Create account",
+  continueAsGuest: "Continue without an account",
+  guestProfile: "Your lists are saved only on this device.",
+  saveYourLists: "Sign in to save your lists to your account.",
+  guestDataImporting: "Saving your device lists to your account…",
+  guestDataImportFailed:
+    "Your device lists are safe, but could not be saved to your account. Try again.",
+  serverTimeout: "The server is taking too long to respond. Try again.",
   email: "Email",
   password: "Password",
   fullName: "Your name",
@@ -14,8 +21,34 @@ export const en = {
   or: "or",
   switchToSignUp: "Don't have an account? Create one",
   switchToSignIn: "Already have an account? Sign in",
-  checkEmail: "Check your email to confirm your account, then sign in.",
+  checkEmail:
+    "Check your email to confirm your account. Your lists stay on this device until you sign in; you can continue as a guest meanwhile.",
+  emailConfirmError: "Could not confirm your email.",
+  confirmationCodeMissing:
+    "This confirmation link is missing its authorization code.",
+  signInUnavailable: "Sign in is not available right now.",
+  returnToSignIn: "Return to sign in",
   myLists: "My lists",
+  back: "Back",
+  moreOptions: "More options",
+  selectTasks: "Select tasks",
+  searchTasks: "Search tasks",
+  noMatchingTasks: "No matching tasks.",
+  listNotFound: "This list is no longer available.",
+  newTask: "New task",
+  addAction: "Add",
+  addMultiple: "Add multiple",
+  addOneTask: "Add one task",
+  addBulkTask: "Add {count} task",
+  addBulkTasks: "Add {count} tasks",
+  bulkTaskInstructions:
+    "Type or paste one task per line. Empty lines are skipped.",
+  bulkTaskInput: "Tasks to add",
+  bulkTaskPlaceholder: "First task\nSecond task\nThird task",
+  bulkSingleTaskCount: "{count} task to add",
+  bulkTaskCount: "{count} tasks to add",
+  bulkTooManyTasks: "You can add up to 100 tasks at once.",
+  bulkTaskTooLong: "Line {line}: task titles must be 240 characters or fewer.",
   hello: "Hello",
   addList: "New list",
   listName: "List name",
@@ -28,6 +61,15 @@ export const en = {
   save: "Save",
   signOut: "Sign out",
   signOutConfirm: "Are you sure you want to sign out?",
+  deleteAccount: "Delete account",
+  deleteAccountConfirm:
+    "Permanently delete your account and all lists and tasks saved to it? This cannot be undone. Lists saved only on this device will remain.",
+  deleteAccountFailed: "Could not delete your account",
+  accountDeleted: "Account deleted",
+  accountDeletedLocalWarning:
+    "Your account was deleted, but some saved data on this device could not be cleared. You can remove the app to clear that local data.",
+  appleRevokeHint:
+    "If you used Sign in with Apple, you can also stop sharing your Apple ID with Todo in iPhone Settings → your name → Sign in with Apple.",
   delete: "Delete",
   cancel: "Cancel",
   deleteList: "Delete this list and all its tasks?",
@@ -40,6 +82,7 @@ export const en = {
   configuration:
     "Add your Supabase URL and publishable key to .env to get started.",
   loading: "Loading…",
+  retry: "Try again",
   error: "Something went wrong. Please try again.",
 } as const;
 

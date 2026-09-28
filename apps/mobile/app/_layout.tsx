@@ -15,9 +15,8 @@ function Navigator() {
   useEffect(() => {
     if (loading) return;
     const inAuth = segments[0] === "(auth)" || segments[0] === "auth";
-    const inApp = segments[0] === "(app)";
-    if (session && !inApp) router.replace("/");
-    if (!session && !inAuth) router.replace("/(auth)");
+    // Lists are available offline to guests. Authentication is an optional route.
+    if (session && inAuth) router.replace("/(app)");
   }, [session, loading, segments, router]);
 
   if (loading) {

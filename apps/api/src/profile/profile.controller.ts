@@ -2,10 +2,15 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
+  HttpCode,
+  HttpStatus,
   Patch,
+  ServiceUnavailableException,
   UseGuards,
 } from "@nestjs/common";
+import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { AuthGuard } from "../auth/auth.guard";
 import { CurrentUser } from "../auth/current-user.decorator";
@@ -62,6 +67,38 @@ export class ProfileController {
       where: { id: user.id },
       data: result.data,
     });
+  }
+
+  @Delete("me")
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async deleteAccount(@CurrentUser() user: { id: string }): Promise<void> {
+    const url = process.env.SUPABASE_URL;
+    const secretKey = process.env.SUPABASE_SECRET_KEY;
+    if (
+      !url ||
+      !secretKey ||
+      secretKey === process.env.SUPABASE_PUBLISHABLE_KEY
+    )
+      throw new ServiceUnavailableException("Account deletion is unavailable.");
+
+    try {
+      const admin = createClient(url, secretKey, {
+        auth: { autoRefreshToken: false, persistSession: false },
+        global: {
+          fetch: (input, init) =>
+            fetch(input, { ...init, signal: AbortSignal.timeout(10_000) }),
+        },
+      });
+      const { error } = await admin.auth.admin.deleteUser(user.id);
+      // A concurrent request may have completed the deletion already.
+      if (!error || (error.status === 404 && error.code === "user_not_found"))
+        return;
+    } catch {
+      // Do not expose Supabase errors or server credentials to the client.
+    }
+    throw new ServiceUnavailableException(
+      "Account deletion could not be completed.",
+    );
   }
 }
 
