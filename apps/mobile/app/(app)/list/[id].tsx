@@ -1,5 +1,6 @@
 import { Host, Icon } from "@expo/ui";
 import { BlurTargetView, BlurView } from "expo-blur";
+import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { router, useLocalSearchParams } from "expo-router";
@@ -27,6 +28,7 @@ import {
 import type { TodoItem, TodoList } from "@/api/client";
 import { useAuth } from "@/auth/auth-context";
 import { NativeIcon } from "@/components/native-icon";
+import { ListColorPicker } from "@/components/list-color-picker";
 import { TaskRow } from "@/components/task-row";
 import {
   PartialBatchCreateError,
@@ -38,8 +40,15 @@ import {
   removeItems,
   removeList,
   setItemCompleted,
+  updateList,
 } from "@/data/todo-repository";
 import { t } from "@/i18n";
+import {
+  DEFAULT_LIST_COLOR,
+  getListColor,
+  getListGradient,
+  type ListColorKey,
+} from "@/theme/list-colors";
 
 const palette = {
   background: "#F7F7F7",
@@ -92,6 +101,10 @@ export default function ListDetailScreen() {
   const [bulkTaskText, setBulkTaskText] = useState("");
   const [createMode, setCreateMode] = useState<"single" | "bulk">("single");
   const [isCreateTaskOpen, setCreateTaskOpen] = useState(false);
+  const [isEditListOpen, setEditListOpen] = useState(false);
+  const [editTitle, setEditTitle] = useState("");
+  const [editComment, setEditComment] = useState("");
+  const [editColor, setEditColor] = useState<ListColorKey>(DEFAULT_LIST_COLOR);
   const [isSelecting, setSelecting] = useState(false);
   const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([]);
   const [headerHeight, setHeaderHeight] = useState(160 + insets.top);
@@ -106,6 +119,7 @@ export default function ListDetailScreen() {
     queryFn: () => getLists(session),
   });
   const list = listsQuery.data?.find((entry) => entry.id === listId);
+  const listGradient = getListGradient(list?.colorKey);
   const visibleTasks = useMemo(() => {
     if (!list) return [];
     const term = search.trim().toLocaleLowerCase();
@@ -289,6 +303,40 @@ export default function ListDetailScreen() {
     onError: (error) => Alert.alert(t("error"), error.message),
   });
 
+  const saveListChanges = useMutation({
+    mutationFn: () =>
+      updateList(session, listId, {
+        title: editTitle.trim(),
+        comment: editComment.trim() || null,
+        colorKey: editColor,
+      }),
+    onSuccess: (updated) => {
+      queryClient.setQueryData<TodoList[]>(queryKey, (current) =>
+        current?.map((entry) =>
+          entry.id === listId
+            ? { ...entry, ...updated, items: updated.items ?? entry.items }
+            : entry,
+        ),
+      );
+      setEditListOpen(false);
+      void refresh();
+    },
+  });
+
+  const openEditList = () => {
+    if (!list) return;
+    setEditTitle(list.title);
+    setEditComment(list.comment ?? "");
+    setEditColor(getListColor(list.colorKey).key);
+    saveListChanges.reset();
+    setEditListOpen(true);
+  };
+  const closeEditList = () => {
+    if (saveListChanges.isPending) return;
+    setEditListOpen(false);
+    saveListChanges.reset();
+  };
+
   const askToDeleteTask = (item: TodoItem) =>
     Alert.alert(t("delete"), t("deleteTask"), [
       { text: t("cancel"), style: "cancel" },
@@ -348,23 +396,31 @@ export default function ListDetailScreen() {
   };
 
   const showMoreOptions = () => {
-    const options = [t("share"), t("selectTasks"), t("delete"), t("cancel")];
+    const options = [
+      t("editList"),
+      t("share"),
+      t("selectTasks"),
+      t("delete"),
+      t("cancel"),
+    ];
     if (Platform.OS === "ios") {
       ActionSheetIOS.showActionSheetWithOptions(
         {
           options,
-          cancelButtonIndex: 3,
-          destructiveButtonIndex: 2,
+          cancelButtonIndex: 4,
+          destructiveButtonIndex: 3,
         },
         (index) => {
-          if (index === 0) void shareList();
-          if (index === 1) setSelecting(true);
-          if (index === 2) askToDeleteList();
+          if (index === 0) openEditList();
+          if (index === 1) void shareList();
+          if (index === 2) setSelecting(true);
+          if (index === 3) askToDeleteList();
         },
       );
       return;
     }
     Alert.alert(list?.title ?? t("myLists"), undefined, [
+      { text: t("editList"), onPress: openEditList },
       { text: t("share"), onPress: () => void shareList() },
       { text: t("selectTasks"), onPress: () => setSelecting(true) },
       { text: t("delete"), style: "destructive", onPress: askToDeleteList },
@@ -413,12 +469,28 @@ export default function ListDetailScreen() {
 
   return (
     <View style={styles.safe}>
+      {listGradient ? (
+        <LinearGradient
+          pointerEvents="none"
+          colors={listGradient}
+          locations={[0, 0.53, 1]}
+          style={StyleSheet.absoluteFill}
+        />
+      ) : null}
       <KeyboardAvoidingView
         style={styles.screen}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
         <View style={styles.screen}>
           <BlurTargetView ref={blurTarget} style={styles.scroll}>
+            {listGradient ? (
+              <LinearGradient
+                pointerEvents="none"
+                colors={listGradient}
+                locations={[0, 0.53, 1]}
+                style={StyleSheet.absoluteFill}
+              />
+            ) : null}
             <ScrollView
               style={styles.scroll}
               contentContainerStyle={[
@@ -809,6 +881,91 @@ export default function ListDetailScreen() {
                   {t(isBulkCreate ? "addOneTask" : "addMultiple")}
                 </Text>
               </Pressable>
+            </ScrollView>
+          </KeyboardAvoidingView>
+        </SafeAreaView>
+      </Modal>
+
+      <Modal
+        visible={isEditListOpen}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={closeEditList}
+      >
+        <SafeAreaView
+          style={styles.modalSafe}
+          edges={["top", "bottom", "left", "right"]}
+        >
+          <KeyboardAvoidingView
+            style={styles.screen}
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+          >
+            <View style={styles.modalToolbar}>
+              <Pressable
+                accessibilityRole="button"
+                disabled={saveListChanges.isPending}
+                onPress={closeEditList}
+                style={styles.modalAction}
+              >
+                <Text style={styles.modalActionText}>{t("cancel")}</Text>
+              </Pressable>
+              <Text style={styles.modalTitle}>{t("editList")}</Text>
+              <Pressable
+                accessibilityRole="button"
+                disabled={!editTitle.trim() || saveListChanges.isPending}
+                onPress={() => saveListChanges.mutate()}
+                style={styles.modalAction}
+              >
+                <Text
+                  style={[
+                    styles.modalAddText,
+                    (!editTitle.trim() || saveListChanges.isPending) &&
+                      styles.disabledText,
+                  ]}
+                >
+                  {t("save")}
+                </Text>
+              </Pressable>
+            </View>
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={styles.modalBody}
+            >
+              <View
+                style={[
+                  styles.modalIconCircle,
+                  { backgroundColor: getListColor(editColor).base },
+                ]}
+              >
+                <NativeIcon name="check" size={38} color={palette.text} />
+              </View>
+              <TextInput
+                accessibilityLabel={t("listName")}
+                value={editTitle}
+                onChangeText={setEditTitle}
+                placeholder={t("listName")}
+                placeholderTextColor={palette.secondary}
+                style={styles.modalTaskInput}
+              />
+              <TextInput
+                accessibilityLabel={t("listComment")}
+                value={editComment}
+                onChangeText={setEditComment}
+                placeholder={t("listComment")}
+                placeholderTextColor={palette.secondary}
+                multiline
+                style={styles.modalCommentInput}
+              />
+              <ListColorPicker
+                value={editColor}
+                onChange={setEditColor}
+                disabled={saveListChanges.isPending}
+              />
+              {saveListChanges.isError ? (
+                <Text accessibilityRole="alert" style={styles.errorText}>
+                  {saveListChanges.error.message}
+                </Text>
+              ) : null}
             </ScrollView>
           </KeyboardAvoidingView>
         </SafeAreaView>

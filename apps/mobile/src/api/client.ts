@@ -1,5 +1,6 @@
 import type { Session } from "@supabase/supabase-js";
 import { t } from "@/i18n";
+import type { ListColorKey } from "@/theme/list-colors";
 
 const apiUrl = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, "");
 
@@ -66,6 +67,7 @@ export type TodoList = {
   id: string;
   title: string;
   comment: string | null;
+  colorKey: ListColorKey;
   items: TodoItem[];
 };
 

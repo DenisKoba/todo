@@ -10,6 +10,7 @@ type StoredList = {
   importKey: string | null;
   title: string;
   comment: string | null;
+  colorKey?: string;
   position: number;
 };
 type StoredItem = {
@@ -150,6 +151,7 @@ test("guest import creates profile and appends full list once across retries", a
   assert.equal(store.lists[0]?.id, existing.id);
   assert.equal(store.lists[1]?.position, 1);
   assert.equal(store.lists[1]?.comment, "Weekend");
+  assert.equal(store.lists[1]?.colorKey, "neutral");
   assert.deepEqual(
     store.items.map(({ title, comment, completed, position }) => ({
       title,
@@ -172,6 +174,44 @@ test("guest import creates profile and appends full list once across retries", a
       { clientId: guestList.clientId, id: store.lists[1]?.id, imported: false },
     ],
   });
+});
+
+test("list colors are saved on creation and retained during guest import", async () => {
+  const store = controllerWithMemoryStore();
+  await store.controller.createList(user, {
+    title: "Ideas",
+    colorKey: "lavender",
+  });
+  await store.controller.importLists(user, {
+    lists: [{ ...guestList, colorKey: "sage" }],
+  });
+  assert.equal(store.lists[0]?.colorKey, "lavender");
+  assert.equal(store.lists[1]?.colorKey, "sage");
+});
+
+test("list color updates accept palette values and reject unknown ones", async () => {
+  let savedColor: unknown;
+  const prisma = {
+    todoList: {
+      updateMany: async ({ data }: { data: { colorKey?: string } }) => {
+        savedColor = data.colorKey;
+        return { count: 1 };
+      },
+      findUnique: async () => ({
+        id: guestList.clientId,
+        colorKey: savedColor,
+      }),
+    },
+  } as unknown as PrismaService;
+  const controller = new ListsController(prisma);
+  const listId = "00000000-0000-4000-8000-000000000002";
+  await controller.updateList(user, listId, { colorKey: "coral" });
+  assert.equal(savedColor, "coral");
+  await assert.rejects(
+    controller.updateList(user, listId, { colorKey: "unexpected" }),
+    BadRequestException,
+  );
+  assert.equal(savedColor, "coral");
 });
 
 test("a clientId is scoped to its account", async () => {

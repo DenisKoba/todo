@@ -19,6 +19,9 @@ import { PrismaService } from "../prisma/prisma.service";
 const listInput = z.object({
   title: z.string().trim().min(1).max(120),
   comment: z.string().max(2000).nullable().optional(),
+  colorKey: z
+    .enum(["neutral", "coral", "peach", "butter", "sage", "sky", "lavender"])
+    .optional(),
 });
 const itemInput = z.object({
   title: z.string().trim().min(1).max(240),
@@ -149,6 +152,7 @@ export class ListsController {
               importKey: list.clientId,
               title: list.title,
               comment: list.comment,
+              colorKey: list.colorKey ?? "neutral",
               position: nextPosition,
             },
             skipDuplicates: true,

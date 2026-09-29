@@ -40,6 +40,8 @@ All endpoints except `GET /v1/health` require `Authorization: Bearer <Supabase a
 
 The home screen is available without an account. Guest lists, comments, tasks, and completion state are stored only on the device in SQLite and work without the API. Sign-in/sign-up (email/password, Google, and Apple on supported iOS devices) is optional in Profile. After authentication, pending guest lists are uploaded one at a time, appended to any existing account lists, and marked imported locally only after the server confirms each one. If import fails, the local data remains on the device and the home screen offers a retry. Signing out hides the cloud account data; already imported local lists remain on disk but are not shown to another guest. Sharing exports list text through the native share sheet; live collaboration is deferred.
 
+Lists can use a neutral or pastel color. The palette key is persisted in guest SQLite and in PostgreSQL for signed-in users, including guest-to-account imports. Existing lists default to neutral after the additive migration. The selected color tints its home card and generates the detail screen's background gradient; list title, note, and color can be changed from the detail screen's More menu. Deploy the API migration before using a new mobile build against Render.
+
 ## Project status
 
 There are no seeded or demo user records. Signed-in lists, tasks, and profiles use the Supabase-backed API; guest data is device-local. The app revalidates queries on screen entry and when it returns to the foreground. The guest-import migration must be deployed before a signed-in user can import local lists.

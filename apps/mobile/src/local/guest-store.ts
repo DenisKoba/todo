@@ -1,11 +1,13 @@
 import * as Crypto from "expo-crypto";
 import * as SQLite from "expo-sqlite";
 import type { TodoItem, TodoList } from "@/api/client";
+import { DEFAULT_LIST_COLOR, type ListColorKey } from "@/theme/list-colors";
 
 type GuestListRow = {
   id: string;
   title: string;
   comment: string | null;
+  color_key: ListColorKey;
   position: number;
 };
 
@@ -23,6 +25,7 @@ export type GuestImportPayload = {
     clientId: string;
     title: string;
     comment: string | null;
+    colorKey: ListColorKey;
     position: number;
     items: Array<{
       clientId: string;
@@ -46,6 +49,7 @@ function getDatabase(): Promise<SQLite.SQLiteDatabase> {
           id TEXT PRIMARY KEY NOT NULL,
           title TEXT NOT NULL,
           comment TEXT,
+          color_key TEXT NOT NULL DEFAULT 'neutral',
           position INTEGER NOT NULL,
           created_at TEXT NOT NULL,
           imported_owner_id TEXT
@@ -62,6 +66,14 @@ function getDatabase(): Promise<SQLite.SQLiteDatabase> {
         CREATE INDEX IF NOT EXISTS guest_items_list_position_idx
           ON guest_items(list_id, position);
       `);
+      const columns = await database.getAllAsync<{ name: string }>(
+        "PRAGMA table_info(guest_lists)",
+      );
+      if (!columns.some((column) => column.name === "color_key")) {
+        await database.execAsync(
+          "ALTER TABLE guest_lists ADD COLUMN color_key TEXT NOT NULL DEFAULT 'neutral'",
+        );
+      }
       return database;
     })
     .catch((error: unknown) => {
@@ -102,7 +114,7 @@ async function readPendingLists(
 ): Promise<Array<GuestListRow & { items: TodoItem[] }>> {
   const [lists, items] = await Promise.all([
     database.getAllAsync<GuestListRow>(`
-      SELECT id, title, comment, position
+      SELECT id, title, comment, color_key, position
       FROM guest_lists
       WHERE imported_owner_id IS NULL
       ORDER BY position ASC, created_at ASC
@@ -133,10 +145,11 @@ async function readPendingLists(
 export async function getGuestLists(): Promise<TodoList[]> {
   const database = await getDatabase();
   const lists = await readPendingLists(database);
-  return lists.map(({ id, title, comment, items }) => ({
+  return lists.map(({ id, title, comment, color_key, items }) => ({
     id,
     title,
     comment,
+    colorKey: color_key,
     items,
   }));
 }
@@ -144,11 +157,13 @@ export async function getGuestLists(): Promise<TodoList[]> {
 export async function createGuestList(input: {
   title: string;
   comment?: string | null;
+  colorKey?: ListColorKey;
 }): Promise<TodoList> {
   const database = await getDatabase();
   const id = Crypto.randomUUID();
   const title = validTitle(input.title, 120);
   const comment = validComment(input.comment);
+  const colorKey = input.colorKey ?? DEFAULT_LIST_COLOR;
   await database.withExclusiveTransactionAsync(async (transaction) => {
     const next = await transaction.getFirstAsync<{ position: number }>(`
       SELECT COALESCE(MAX(position) + 1, 0) AS position
@@ -157,16 +172,37 @@ export async function createGuestList(input: {
     `);
     await transaction.runAsync(
       `INSERT INTO guest_lists
-         (id, title, comment, position, created_at)
-       VALUES (?, ?, ?, ?, ?)`,
+         (id, title, comment, color_key, position, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
       id,
       title,
       comment,
+      colorKey,
       next?.position ?? 0,
       new Date().toISOString(),
     );
   });
-  return { id, title, comment, items: [] };
+  return { id, title, comment, colorKey, items: [] };
+}
+
+export async function updateGuestList(
+  listId: string,
+  input: { title: string; comment: string | null; colorKey: ListColorKey },
+): Promise<TodoList> {
+  const database = await getDatabase();
+  const title = validTitle(input.title, 120);
+  const comment = validComment(input.comment);
+  const result = await database.runAsync(
+    `UPDATE guest_lists SET title = ?, comment = ?, color_key = ?
+     WHERE id = ? AND imported_owner_id IS NULL`,
+    title,
+    comment,
+    input.colorKey,
+    listId,
+  );
+  if (!result.changes) throw new Error("List not found.");
+  const lists = await getGuestLists();
+  return lists.find((list) => list.id === listId)!;
 }
 
 export async function createGuestItem(
@@ -296,6 +332,7 @@ export async function getPendingGuestImport(): Promise<GuestImportPayload> {
       clientId: list.id,
       title: list.title,
       comment: list.comment,
+      colorKey: list.color_key,
       position: list.position,
       items: list.items.map((item) => ({
         clientId: item.id,

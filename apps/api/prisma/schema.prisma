@@ -25,6 +25,7 @@ model TodoList {
   importKey String?    @map("import_key") @db.VarChar(128)
   title     String     @db.VarChar(120)
   comment   String?
+  colorKey  String     @default("neutral") @map("color_key") @db.VarChar(24)
   position  Int        @default(0)
   createdAt DateTime   @default(now()) @map("created_at")
   updatedAt DateTime   @updatedAt @map("updated_at")

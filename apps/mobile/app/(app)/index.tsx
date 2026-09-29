@@ -22,12 +22,18 @@ import {
 import type { TodoList } from "@/api/client";
 import { useAuth } from "@/auth/auth-context";
 import { NativeIcon } from "@/components/native-icon";
+import { ListColorPicker } from "@/components/list-color-picker";
 import {
   createList as saveList,
   getLists,
   listQueryKey,
 } from "@/data/todo-repository";
 import { t } from "@/i18n";
+import {
+  DEFAULT_LIST_COLOR,
+  getListColor,
+  type ListColorKey,
+} from "@/theme/list-colors";
 
 const palette = {
   background: "#F7F7F7",
@@ -81,6 +87,7 @@ export default function ListsScreen() {
   const [search, setSearch] = useState("");
   const [listTitle, setListTitle] = useState("");
   const [listComment, setListComment] = useState("");
+  const [listColor, setListColor] = useState<ListColorKey>(DEFAULT_LIST_COLOR);
   const [isCreateListOpen, setCreateListOpen] = useState(false);
   const [headerHeight, setHeaderHeight] = useState(160 + insets.top);
   const [footerHeight, setFooterHeight] = useState(82 + insets.bottom);
@@ -108,10 +115,12 @@ export default function ListsScreen() {
       saveList(session, {
         title: listTitle.trim(),
         comment: listComment.trim() || null,
+        colorKey: listColor,
       }),
     onSuccess: (list) => {
       setListTitle("");
       setListComment("");
+      setListColor(DEFAULT_LIST_COLOR);
       setCreateListOpen(false);
       queryClient.setQueryData<TodoList[]>(queryKey, (current) =>
         current?.some((entry) => entry.id === list.id)
@@ -126,6 +135,7 @@ export default function ListsScreen() {
   const openCreateList = () => {
     setListTitle("");
     setListComment("");
+    setListColor(DEFAULT_LIST_COLOR);
     createList.reset();
     setCreateListOpen(true);
   };
@@ -188,6 +198,14 @@ export default function ListsScreen() {
                       }
                       style={({ pressed }) => [
                         styles.card,
+                        {
+                          backgroundColor: getListColor(list.colorKey).base,
+                          borderColor:
+                            getListColor(list.colorKey).key ===
+                            DEFAULT_LIST_COLOR
+                              ? palette.border
+                              : "rgba(0,0,0,0.08)",
+                        },
                         pressed && styles.cardPressed,
                       ]}
                     >
@@ -204,7 +222,12 @@ export default function ListsScreen() {
                           color={palette.muted}
                         />
                       </View>
-                      <View style={styles.cardDivider} />
+                      <View
+                        style={[
+                          styles.cardDivider,
+                          { backgroundColor: "rgba(0,0,0,0.12)" },
+                        ]}
+                      />
                       <View style={styles.cardPreview}>
                         {list.items.slice(0, 4).map((item) => (
                           <Text
@@ -384,7 +407,12 @@ export default function ListsScreen() {
               keyboardShouldPersistTaps="handled"
               contentContainerStyle={styles.modalBody}
             >
-              <View style={styles.listIconCircle}>
+              <View
+                style={[
+                  styles.listIconCircle,
+                  { backgroundColor: getListColor(listColor).base },
+                ]}
+              >
                 <ScreenIcon name="document" size={40} />
               </View>
               <TextInput
@@ -405,6 +433,11 @@ export default function ListsScreen() {
                 placeholderTextColor={palette.muted}
                 style={styles.listCommentInput}
                 multiline
+              />
+              <ListColorPicker
+                value={listColor}
+                onChange={setListColor}
+                disabled={createList.isPending}
               />
               {createList.isError ? (
                 <Text accessibilityRole="alert" style={styles.errorText}>

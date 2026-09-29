@@ -10,10 +10,16 @@ import {
   getPendingGuestImport,
   markGuestListsImported,
   setGuestItemCompleted,
+  updateGuestList,
 } from "@/local/guest-store";
 import { t } from "@/i18n";
+import type { ListColorKey } from "@/theme/list-colors";
 
-type ListInput = { title: string; comment: string | null };
+type ListInput = {
+  title: string;
+  comment: string | null;
+  colorKey: ListColorKey;
+};
 type ItemInput = { title: string; comment: string | null };
 
 /** The older API creates one task at a time, so some may persist before a failure. */
@@ -111,6 +117,18 @@ export async function createList(session: Session | null, input: ListInput) {
   await importPendingGuestLists(session);
   return api<TodoList>("/lists", session, {
     method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function updateList(
+  session: Session | null,
+  listId: string,
+  input: ListInput,
+): Promise<TodoList> {
+  if (!session) return updateGuestList(listId, input);
+  return api<TodoList>(`/lists/${listId}`, session, {
+    method: "PATCH",
     body: JSON.stringify(input),
   });
 }
