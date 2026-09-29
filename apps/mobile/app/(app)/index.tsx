@@ -1,4 +1,5 @@
 import { Host, Icon } from "@expo/ui";
+import { MenuView } from "@expo/ui/community/menu";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BlurTargetView, BlurView } from "expo-blur";
 import { router } from "expo-router";
@@ -14,6 +15,7 @@ import {
   Text,
   TextInput,
   View,
+  useWindowDimensions,
 } from "react-native";
 import {
   SafeAreaView,
@@ -27,6 +29,7 @@ import {
   createList as saveList,
   getLists,
   listQueryKey,
+  removeList,
 } from "@/data/todo-repository";
 import { t } from "@/i18n";
 import {
@@ -48,10 +51,6 @@ const icons = {
   search: Icon.select({
     ios: "magnifyingglass",
     android: import("@expo/material-symbols/search.xml"),
-  }),
-  more: Icon.select({
-    ios: "ellipsis",
-    android: import("@expo/material-symbols/more_horiz.xml"),
   }),
   chevron: Icon.select({
     ios: "chevron.right",
@@ -81,6 +80,8 @@ function ScreenIcon({
 
 export default function ListsScreen() {
   const insets = useSafeAreaInsets();
+  const { width: windowWidth } = useWindowDimensions();
+  const cardWidth = (windowWidth - insets.left - insets.right - 56) / 2;
   const { session } = useAuth();
   const queryClient = useQueryClient();
   const queryKey = listQueryKey(session);
@@ -92,6 +93,7 @@ export default function ListsScreen() {
   const [headerHeight, setHeaderHeight] = useState(160 + insets.top);
   const [footerHeight, setFooterHeight] = useState(82 + insets.bottom);
   const blurTarget = useRef<View>(null);
+  const cardPressStartedAt = useRef(new Map<string, number>());
 
   const listsQuery = useQuery({
     queryKey,
@@ -131,6 +133,28 @@ export default function ListsScreen() {
       router.push({ pathname: "/(app)/list/[id]", params: { id: list.id } });
     },
   });
+
+  const deleteList = useMutation({
+    mutationFn: (listId: string) => removeList(session, listId),
+    onSuccess: (_result, listId) => {
+      queryClient.setQueryData<TodoList[]>(queryKey, (current) =>
+        current?.filter((list) => list.id !== listId),
+      );
+      void queryClient.invalidateQueries({ queryKey });
+    },
+    onError: (error) => Alert.alert(t("error"), error.message),
+  });
+
+  const confirmDeleteList = (list: TodoList) => {
+    Alert.alert(t("delete"), t("deleteList"), [
+      { text: t("cancel"), style: "cancel" },
+      {
+        text: t("delete"),
+        style: "destructive",
+        onPress: () => deleteList.mutate(list.id),
+      },
+    ]);
+  };
 
   const openCreateList = () => {
     setListTitle("");
@@ -186,60 +210,95 @@ export default function ListsScreen() {
               ) : (
                 <View style={styles.grid}>
                   {filteredLists.map((list) => (
-                    <Pressable
-                      key={list.id}
-                      accessibilityRole="button"
-                      accessibilityLabel={`${list.title}, ${list.items.length} tasks`}
-                      onPress={() =>
-                        router.push({
-                          pathname: "/(app)/list/[id]",
-                          params: { id: list.id },
-                        })
-                      }
-                      style={({ pressed }) => [
-                        styles.card,
-                        {
-                          backgroundColor: getListColor(list.colorKey).base,
-                          borderColor:
-                            getListColor(list.colorKey).key ===
-                            DEFAULT_LIST_COLOR
-                              ? palette.border
-                              : "rgba(0,0,0,0.08)",
-                        },
-                        pressed && styles.cardPressed,
-                      ]}
-                    >
-                      <View style={styles.cardHeader}>
-                        <Text style={styles.cardTitle} numberOfLines={1}>
-                          {list.title}
-                        </Text>
-                        <Text style={styles.cardCount}>
-                          {list.items.length}
-                        </Text>
-                        <ScreenIcon
-                          name="chevron"
-                          size={17}
-                          color={palette.muted}
-                        />
-                      </View>
-                      <View
-                        style={[
-                          styles.cardDivider,
-                          { backgroundColor: "rgba(0,0,0,0.12)" },
+                    <View key={list.id} style={{ width: cardWidth }}>
+                      <MenuView
+                        style={{ width: cardWidth }}
+                        shouldOpenOnLongPress
+                        actions={[
+                          {
+                            id: "delete",
+                            title: t("delete"),
+                            image: "trash",
+                            attributes: {
+                              destructive: true,
+                              disabled: deleteList.isPending,
+                            },
+                          },
                         ]}
-                      />
-                      <View style={styles.cardPreview}>
-                        {list.items.slice(0, 4).map((item) => (
-                          <Text
-                            key={item.id}
-                            style={styles.previewText}
-                            numberOfLines={1}
-                          >
-                            {item.title}
-                          </Text>
-                        ))}
-                      </View>
-                    </Pressable>
+                        onPressAction={({ nativeEvent }) => {
+                          if (nativeEvent.event === "delete")
+                            confirmDeleteList(list);
+                        }}
+                      >
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityLabel={`${list.title}, ${list.items.length} tasks`}
+                          accessibilityHint={t("listCardHint")}
+                          onPressIn={() =>
+                            cardPressStartedAt.current.set(list.id, Date.now())
+                          }
+                          onLongPress={() =>
+                            cardPressStartedAt.current.set(list.id, 1)
+                          }
+                          onPress={() => {
+                            const startedAt = cardPressStartedAt.current.get(
+                              list.id,
+                            );
+                            cardPressStartedAt.current.delete(list.id);
+                            if (startedAt && Date.now() - startedAt >= 300)
+                              return;
+                            router.push({
+                              pathname: "/(app)/list/[id]",
+                              params: { id: list.id },
+                            });
+                          }}
+                          style={({ pressed }) => [
+                            styles.card,
+                            { width: cardWidth },
+                            {
+                              backgroundColor: getListColor(list.colorKey).base,
+                              borderColor:
+                                getListColor(list.colorKey).key ===
+                                DEFAULT_LIST_COLOR
+                                  ? palette.border
+                                  : "rgba(0,0,0,0.08)",
+                            },
+                            pressed && styles.cardPressed,
+                          ]}
+                        >
+                          <View style={styles.cardHeader}>
+                            <Text style={styles.cardTitle} numberOfLines={1}>
+                              {list.title}
+                            </Text>
+                            <Text style={styles.cardCount}>
+                              {list.items.length}
+                            </Text>
+                            <ScreenIcon
+                              name="chevron"
+                              size={17}
+                              color={palette.muted}
+                            />
+                          </View>
+                          <View
+                            style={[
+                              styles.cardDivider,
+                              { backgroundColor: "rgba(0,0,0,0.12)" },
+                            ]}
+                          />
+                          <View style={styles.cardPreview}>
+                            {list.items.slice(0, 4).map((item) => (
+                              <Text
+                                key={item.id}
+                                style={styles.previewText}
+                                numberOfLines={1}
+                              >
+                                {item.title}
+                              </Text>
+                            ))}
+                          </View>
+                        </Pressable>
+                      </MenuView>
+                    </View>
                   ))}
                 </View>
               )}
@@ -287,19 +346,6 @@ export default function ListsScreen() {
                   style={styles.circleButton}
                 >
                   <NativeIcon name="add" size={28} color={palette.black} />
-                </Pressable>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="More options"
-                  onPress={() =>
-                    Alert.alert(t("myLists"), undefined, [
-                      { text: t("profile"), onPress: openProfile },
-                      { text: t("cancel"), style: "cancel" },
-                    ])
-                  }
-                  style={styles.circleButton}
-                >
-                  <ScreenIcon name="more" size={25} />
                 </Pressable>
               </View>
             </View>
@@ -522,7 +568,6 @@ const styles = StyleSheet.create({
     rowGap: 16,
   },
   card: {
-    width: "48%",
     minHeight: 180,
     borderRadius: 22,
     borderWidth: 1,

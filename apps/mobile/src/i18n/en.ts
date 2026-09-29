@@ -82,6 +82,7 @@ export const en = {
   delete: "Delete",
   cancel: "Cancel",
   deleteList: "Delete this list and all its tasks?",
+  listCardHint: "Touch and hold for list options.",
   deleteTask: "Delete this task?",
   deleteSelected: "Delete selected",
   deleteAction: "Delete",

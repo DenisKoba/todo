@@ -5,6 +5,7 @@ import * as Haptics from "expo-haptics";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { router, useLocalSearchParams } from "expo-router";
 import { useMemo, useRef, useState } from "react";
+import Animated, { LinearTransition } from "react-native-reanimated";
 import {
   ActionSheetIOS,
   Alert,
@@ -95,6 +96,13 @@ export default function ListDetailScreen() {
   const { session } = useAuth();
   const queryClient = useQueryClient();
   const queryKey = listQueryKey(session);
+  const completionMutationKey = [
+    "item-completion",
+    session?.user.id ?? "guest",
+    listId,
+  ] as const;
+  const completionSequence = useRef(0);
+  const latestCompletionSequence = useRef(new Map<string, number>());
   const [search, setSearch] = useState("");
   const [taskTitle, setTaskTitle] = useState("");
   const [taskComment, setTaskComment] = useState("");
@@ -123,11 +131,17 @@ export default function ListDetailScreen() {
   const visibleTasks = useMemo(() => {
     if (!list) return [];
     const term = search.trim().toLocaleLowerCase();
-    if (!term) return list.items;
-    return list.items.filter(
-      (item) =>
-        item.title.toLocaleLowerCase().includes(term) ||
-        item.comment?.toLocaleLowerCase().includes(term),
+    const matchingTasks = term
+      ? list.items.filter(
+          (item) =>
+            item.title.toLocaleLowerCase().includes(term) ||
+            item.comment?.toLocaleLowerCase().includes(term),
+        )
+      : list.items;
+    return [...matchingTasks].sort(
+      (first, second) =>
+        Number(second.completed) - Number(first.completed) ||
+        first.position - second.position,
     );
   }, [list, search]);
   const bulkDraft = useMemo(() => {
@@ -225,24 +239,68 @@ export default function ListDetailScreen() {
   });
 
   const setCompleted = useMutation({
+    mutationKey: completionMutationKey,
+    scope: { id: `item-completion:${session?.user.id ?? "guest"}:${listId}` },
     mutationFn: ({ item, completed }: { item: TodoItem; completed: boolean }) =>
       setItemCompleted(session, item.id, completed),
-    onSuccess: (updated) => {
+    onMutate: async ({ item, completed }) => {
+      const sequence = ++completionSequence.current;
+      latestCompletionSequence.current.set(item.id, sequence);
+      await queryClient.cancelQueries({ queryKey });
+      const previousCompleted =
+        queryClient
+          .getQueryData<TodoList[]>(queryKey)
+          ?.find((entry) => entry.id === listId)
+          ?.items.find((entry) => entry.id === item.id)?.completed ??
+        item.completed;
       queryClient.setQueryData<TodoList[]>(queryKey, (current) =>
         current?.map((entry) =>
           entry.id === listId
             ? {
                 ...entry,
-                items: entry.items.map((item) =>
-                  item.id === updated.id ? { ...item, ...updated } : item,
+                items: entry.items.map((currentItem) =>
+                  currentItem.id === item.id
+                    ? { ...currentItem, completed }
+                    : currentItem,
                 ),
               }
             : entry,
         ),
       );
-      void refresh();
+      return { previousCompleted, sequence };
     },
-    onError: (error) => Alert.alert(t("error"), error.message),
+    onError: (error, { item }, context) => {
+      if (
+        context &&
+        latestCompletionSequence.current.get(item.id) === context.sequence
+      ) {
+        queryClient.setQueryData<TodoList[]>(queryKey, (current) =>
+          current?.map((entry) =>
+            entry.id === listId
+              ? {
+                  ...entry,
+                  items: entry.items.map((currentItem) =>
+                    currentItem.id === item.id
+                      ? { ...currentItem, completed: context.previousCompleted }
+                      : currentItem,
+                  ),
+                }
+              : entry,
+          ),
+        );
+      }
+      Alert.alert(t("error"), error.message);
+    },
+    onSettled: (_data, _error, { item }, context) => {
+      if (latestCompletionSequence.current.get(item.id) === context?.sequence) {
+        latestCompletionSequence.current.delete(item.id);
+      }
+      if (
+        queryClient.isMutating({ mutationKey: completionMutationKey }) === 1
+      ) {
+        void refresh();
+      }
+    },
   });
 
   const deleteTask = useMutation({
@@ -542,7 +600,11 @@ export default function ListDetailScreen() {
               ) : (
                 <View style={styles.taskGroup}>
                   {visibleTasks.map((item, index) => (
-                    <View key={item.id} style={styles.taskRowWrap}>
+                    <Animated.View
+                      key={item.id}
+                      layout={LinearTransition.duration(180)}
+                      style={styles.taskRowWrap}
+                    >
                       {index > 0 ? <View style={styles.separator} /> : null}
                       <TaskRow
                         item={item}
@@ -557,7 +619,7 @@ export default function ListDetailScreen() {
                         onToggleSelection={() => toggleSelection(item.id)}
                         onDelete={() => askToDeleteTask(item)}
                       />
-                    </View>
+                    </Animated.View>
                   ))}
                 </View>
               )}
